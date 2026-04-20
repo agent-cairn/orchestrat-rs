@@ -8,7 +8,7 @@ pub type Result<T> = std::result::Result<T, OrchestratError>;
 pub enum OrchestratError {
     /// Error from Valkey operations
     #[error("Valkey error: {0}")]
-    Valkey(#[from] redis::RedisError),
+    Valkey(String),
 
     /// Error from serialization/deserialization
     #[error("JSON error: {0}")]
@@ -17,6 +17,10 @@ pub enum OrchestratError {
     /// LLM client error
     #[error("LLM client error: {0}")]
     LlmClient(String),
+
+    /// WASM sandbox error
+    #[error("WASM sandbox error: {0}")]
+    Sandbox(String),
 
     /// Execution engine error
     #[error("Execution error: {0}")]
@@ -29,4 +33,8 @@ pub enum OrchestratError {
     /// Configuration error
     #[error("Configuration error: {0}")]
     Config(String),
+
+    /// Timeout error
+    #[error("Operation timed out: {0}")]
+    Timeout(String),
 }

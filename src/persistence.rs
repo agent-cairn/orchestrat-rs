@@ -1,7 +1,6 @@
 use crate::checkpoint::Checkpoint;
 use crate::error::{OrchestratError, Result};
 use async_trait::async_trait;
-use redis::AsyncCommands;
 use serde_json::json;
 
 /// Configuration for Valkey persistence
@@ -49,8 +48,12 @@ pub struct ValkeyPersistence {
 impl ValkeyPersistence {
     /// Create a new ValkeyPersistence instance
     pub async fn new(config: ValkeyPersistenceConfig) -> Result<Self> {
-        let client = redis::Client::open(config.valkey_url.as_str())?;
-        let conn = client.get_multiplexed_async_connection().await?;
+        let client = redis::Client::open(config.valkey_url.as_str())
+            .map_err(|e| crate::error::OrchestratError::Valkey(format!("Failed to create Redis client: {}", e)))?;
+        let conn = client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(|e| crate::error::OrchestratError::Valkey(format!("Failed to connect to Valkey: {}", e)))?;
 
         Ok(Self { client: conn, config })
     }
@@ -64,15 +67,18 @@ impl ValkeyPersistence {
 impl Persistence for ValkeyPersistence {
     async fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<()> {
         let key = self.checkpoint_key(&checkpoint.execution_id);
-        let value = serde_json::to_string(checkpoint)?;
+        let value = serde_json::to_string(checkpoint)
+            .map_err(OrchestratError::from)?;
 
         // Save checkpoint with TTL
-        redis::cmd("SETEX")
+        let mut conn = self.client.clone();
+        let _: () = redis::cmd("SETEX")
             .arg(&key)
             .arg(self.config.ttl_seconds)
             .arg(&value)
-            .query_async::<()>(&mut self.client.clone())
-            .await?;
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| crate::error::OrchestratError::Valkey(format!("Failed to save checkpoint: {}", e)))?;
 
         // Publish checkpoint saved event
         self.publish_event(json!({
@@ -89,14 +95,17 @@ impl Persistence for ValkeyPersistence {
     async fn load_checkpoint(&self, execution_id: &str) -> Result<Option<Checkpoint>> {
         let key = self.checkpoint_key(execution_id);
 
+        let mut conn = self.client.clone();
         let value: Option<String> = redis::cmd("GET")
             .arg(&key)
-            .query_async(&mut self.client.clone())
-            .await?;
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| crate::error::OrchestratError::Valkey(format!("Failed to load checkpoint: {}", e)))?;
 
         match value {
             Some(v) => {
-                let checkpoint: Checkpoint = serde_json::from_str(&v)?;
+                let checkpoint: Checkpoint = serde_json::from_str(&v)
+                    .map_err(|e| OrchestratError::from(e))?;
                 Ok(Some(checkpoint))
             }
             None => Ok(None),
@@ -105,25 +114,62 @@ impl Persistence for ValkeyPersistence {
 
     async fn delete_checkpoint(&self, execution_id: &str) -> Result<()> {
         let key = self.checkpoint_key(execution_id);
-        redis::cmd("DEL")
+
+        let mut conn = self.client.clone();
+        let _: () = redis::cmd("DEL")
             .arg(&key)
-            .query_async::<()>(&mut self.client.clone())
-            .await?;
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| crate::error::OrchestratError::Valkey(format!("Failed to delete checkpoint: {}", e)))?;
+
         Ok(())
     }
 
     async fn publish_event(&self, event: serde_json::Value) -> Result<()> {
-        let event_json = serde_json::to_string(&event)?;
+        let event_json = serde_json::to_string(&event)
+            .map_err(|e| OrchestratError::from(e))?;
 
         // Use XADD to publish to Valkey Streams
+        let mut conn = self.client.clone();
         let _: () = redis::cmd("XADD")
             .arg(&self.config.stream_name)
             .arg("*")
             .arg("event")
-            .arg(event_json)
-            .query_async(&mut self.client.clone())
-            .await?;
+            .arg(&event_json)
+            .query_async(&mut conn)
+            .await
+            .map_err(|e| crate::error::OrchestratError::Valkey(format!("Failed to publish event: {}", e)))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore] // Requires Valkey to be running
+    async fn test_persistence_basic() {
+        let config = ValkeyPersistenceConfig::default();
+        let persistence = ValkeyPersistence::new(config).await.unwrap();
+
+        let checkpoint = Checkpoint::new("test-persist", 0)
+            .with_state("key", serde_json::json!("value"))
+            .with_total_steps(5);
+
+        // Save and load
+        persistence.save_checkpoint(&checkpoint).await.unwrap();
+        let loaded = persistence
+            .load_checkpoint("test-persist")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(loaded.execution_id, checkpoint.execution_id);
+        assert_eq!(loaded.step_index, checkpoint.step_index);
+
+        // Cleanup
+        persistence.delete_checkpoint("test-persist").await.unwrap();
     }
 }

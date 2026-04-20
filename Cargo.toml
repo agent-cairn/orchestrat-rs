@@ -1,16 +1,16 @@
 [package]
 name = "orchestrat-rs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Rust-native LLM orchestration engine with Valkey persistence"
 license = "Apache-2.0"
 repository = "https://github.com/agent-cairn/orchestrat-rs"
 
 [dependencies]
-# LLM abstraction layer
+# LLM abstraction layer (rig-core for orchestration primitives)
 rig-core = "0.5"
 
-# Async runtime
+# Async runtime (Tokio 1.x - 2.x not shipping yet)
 tokio = { version = "1", features = ["full"] }
 
 # Valkey persistence (redis crate is Valkey-compatible)
@@ -33,3 +33,11 @@ async-trait = "0.1"
 
 # UUID generation
 uuid = { version = "1.0", features = ["v4"] }
+
+# WASM sandbox (Wasmtime >= 44.0.0 for CVE-2026-34987/34971 fixes)
+wasmtime = "44"
+wasmtime-wasi = "44"
+wat = "1"
+
+# Futures for streaming support
+futures = "0.3"

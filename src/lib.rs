@@ -6,13 +6,15 @@
 mod checkpoint;
 mod config;
 mod error;
-mod execution;
+mod executor;
+mod llm;
 mod orchestrator;
 mod persistence;
 
 pub use checkpoint::Checkpoint;
 pub use config::OrchestratorConfig;
 pub use error::{OrchestratError, Result};
-pub use execution::ExecutionEngine;
+pub use executor::{Continuation, ExecutionEngine, ExecutionPlan, Step};
+pub use llm::LlmClient;
 pub use orchestrator::Orchestrator;
-pub use persistence::{ValkeyPersistence, ValkeyPersistenceConfig};
+pub use persistence::{Persistence, ValkeyPersistence, ValkeyPersistenceConfig};
